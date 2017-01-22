@@ -262,7 +262,6 @@ public:
    *   reference to the used block
    */
   used_block_t & unfree(free_block_t &b) {
-    unsigned b_index = &b - blocks_;
     free_block_t &prev_free = blocks_[b.prev_free];
     free_block_t &next_free = blocks_[b.next_free];
 
