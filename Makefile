@@ -32,7 +32,7 @@ CFLAGS                  += -I$(GTEST_ROOT)
 CFLAGS                  += -g3
 CFLAGS                  += -Wall
 
-CXXFLAGS                += -isystem
+#CXXFLAGS                += -isystem
 CXXFLAGS                += -std=c++11
 CXXFLAGS                += $(CFLAGS)
 
@@ -40,6 +40,8 @@ DIRS                    += $(BUILD) $(BUILD)/deps
 DIRS                    += $(sort $(dir $(OBJECTS)))
 
 VPATH                   = $(GTEST_ROOT)
+
+default : run
 
 help :
 	@echo "The following targets are available:"
@@ -108,7 +110,7 @@ $(OBJ)/%.o : %.s
 	@echo Assembling $(<F)
 	@$(AS) $(ASFLAGS) $< -o $(@)
 
-.PHONY : clean info default run
+.PHONY : clean info default run help
 
 old_default :
 	c++ -std=c++11 -g main.cc
