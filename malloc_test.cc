@@ -116,10 +116,16 @@ struct MallocTest : public testing::Test {
     unsigned free_size = 0;
     Umm::blockref_t prev = 0;
 
-    auto block = &umm_.blocks_[1];
-    auto end = &umm_.blocks_[umm_.block_count_ - 1];
+    auto &first = umm_.blocks_[0];
+    auto &last = umm_.blocks_[umm_.block_count_ - 1];
 
-    while (block != end) {
+    if (first.next != 1) return false;
+    if (first.prev != 0) return false;
+    if (last.next != 0) return false;
+
+    auto block = &umm_.blocks_[1];
+
+    while (block != &last) {
       if (!umm_.valid_internal_links(*block)) {
         printf("invalid block links\n");
         return false;
@@ -147,6 +153,8 @@ struct MallocTest : public testing::Test {
       block = &umm_.block_from_index(block->next);
     }
 
+    if ((last.prev & Umm::free_mask) != prev) return false;
+
     //    printf("used = %d, free = %d, actual = %d\n", used_size, free_size,
     //    block_count_);
     if ((free_size + used_size + 2) != umm_.block_count_) {
@@ -155,10 +163,9 @@ struct MallocTest : public testing::Test {
     }
 
     block = &umm_.block_from_index(umm_.blocks_[0].next_free);
-    end = umm_.blocks_;
     unsigned free_list_total = 0;
 
-    while (block != end) {
+    while (block != &first) {
       free_list_total += umm_.size_in_blocks(*block);
       block = &umm_.block_from_index(block->next_free);
     }
@@ -307,4 +314,20 @@ TEST_F(MallocTest, ThreeBlocksFreedInAllPossibleOrders) {
     // verify overall consistency
     consistency_check();
   }
+}
+
+TEST_F(MallocTest, ReallocNullptrWithPositiveSizeSameAsMalloc) {
+  unsigned size = 12;
+  auto block = reinterpret_cast<uint8_t *>(umm_.realloc(nullptr, size));
+
+  ASSERT_NE(block, nullptr);
+  consistency_check();
+
+  for (unsigned i=0; i < size; ++i) {
+    block[i] = 0xff;
+  }
+
+  umm_.dump();
+  EXPECT_TRUE(is_ptr(block));
+  consistency_check();
 }
