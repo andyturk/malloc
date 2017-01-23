@@ -115,3 +115,6 @@ $(OBJ)/%.o : %.s
 old_default :
 	c++ -std=c++11 -g main.cc
 	./a.out
+
+# Pull in all dependency files
+-include $(wildcard $(BUILD)/deps/*.d)

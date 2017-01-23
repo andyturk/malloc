@@ -426,6 +426,30 @@ public:
       b = &blocks_[b->next];
     } while (b > blocks_);
   }
+
+  bool block_list_is_consistent() const {
+    unsigned used_size = 0;
+    unsigned free_size = 0;
+
+    free_block_t *block = &blocks_[1];
+    free_block_t *end = &blocks_[block_count_ - 1];
+    
+    while (block != end) {
+      unsigned s = size_in_blocks(*block);
+      
+      if (is_free(*block)) {
+        free_size += s;
+      } else {
+        used_size += s;
+      }
+
+      if (block->next >= block_count_) return false;
+      block = &block_from_index(block->next);
+    }
+
+    //    printf("used = %d, free = %d, actual = %d\n", used_size, free_size, block_count_);
+    return (free_size + used_size + 2) == block_count_;
+  }
 };
 
 template <unsigned N> class SizedUmm : public Umm {
