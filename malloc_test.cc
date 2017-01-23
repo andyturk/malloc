@@ -1,5 +1,10 @@
+#include <array>
+#include <vector>
+
 #include "gtest/gtest.h"
 #include "malloc.h"
+
+using namespace std;
 
 /**
  * class BlumBlumShub
@@ -47,10 +52,7 @@ struct MallocTest : public testing::Test {
     umm_.init();
   }
 
-  virtual void TearDown() override {
-  }
-
-  void *malloc(size_t size, unsigned seed) {
+  virtual void *malloc(size_t size, unsigned seed) {
     uint8_t *storage = reinterpret_cast<uint8_t *>(umm_.malloc(size));
     if (storage == nullptr) return nullptr;
 
@@ -58,7 +60,7 @@ struct MallocTest : public testing::Test {
     return storage;
   }
 
-  bool check(const void *src, size_t length, unsigned seed) const {
+  virtual bool check(const void *src, size_t length, unsigned seed) const {
     return BlumBlumShub::check(reinterpret_cast<const uint8_t *>(src), length, seed);
   }
 
@@ -168,6 +170,10 @@ struct MallocTest : public testing::Test {
     return true;
   }
 
+  virtual void consistency_check() {
+    EXPECT_TRUE(block_lists_are_consistent());
+  }
+
   Umm::free_block_t &block(void *ptr) const {
     return umm_.block_from_ptr(ptr);
   }
@@ -182,6 +188,68 @@ struct MallocTest : public testing::Test {
 
   SizedUmm<size> umm_;
 };
+
+TEST_F(MallocTest, ThreeBlocksFreeMultiple) {
+  // 6 ways to free all three
+  vector<int> case_012 = {0, 1, 2};
+  vector<int> case_021 = {0, 2, 1};
+  vector<int> case_102 = {1, 0, 2};
+  vector<int> case_120 = {1, 2, 0};
+  vector<int> case_201 = {2, 0, 1};
+  vector<int> case_210 = {2, 1, 0};
+
+  // 6 ways to free two
+  vector<int> case_01 = {0, 1};
+  vector<int> case_02 = {0, 2};
+  vector<int> case_10 = {1, 0};
+  vector<int> case_12 = {1, 2};
+  vector<int> case_20 = {2, 0};
+  vector<int> case_21 = {2, 1};
+
+  // three ways to free just one
+  vector<int> case_0 = {0};
+  vector<int> case_1 = {1};
+  vector<int> case_2 = {2};
+
+  // one way to free none
+  vector<int> case_none = {};
+
+  auto everything = {case_012, case_021, case_102, case_120, case_201,
+                     case_210, case_01,  case_02,  case_10,  case_12,
+                     case_20,  case_21,  case_0,   case_1,   case_2,
+                     case_none};
+
+  // define three blocks of different sizes and contents
+  struct { void *ptr;  size_t len;  unsigned seed; } block[3] = {
+         {   nullptr,          27,              0  },
+         {   nullptr,         200,              1  },
+         {   nullptr,          38,              2  }};
+
+  for (auto &sequence : everything) {
+    // re-initialize the allocator
+    umm_.init();
+
+    // set up test data
+    for (auto &b : block) {
+      b.ptr = malloc(b.len, b.seed); // fill block with pseudo-random data
+    }
+
+    // free some blocks
+    for (auto index : sequence) {
+      umm_.free(block[index].ptr);
+      block[index].ptr = nullptr;
+    }
+
+    for (auto &b : block) {
+      if (b.ptr != nullptr) {
+        EXPECT_TRUE(is_ptr(b.ptr));
+        EXPECT_TRUE(check(b.ptr, b.len, b.seed));
+      }
+    }
+
+    MallocTest::consistency_check();
+  }
+}
 
 TEST_F(MallocTest, T0) {
   ASSERT_FALSE(is_ptr(nullptr));
@@ -203,29 +271,29 @@ TEST_F(MallocTest, T1) {
   EXPECT_TRUE(check(b0, 27, 0));
   EXPECT_TRUE(check(b1, 200, 1));
   EXPECT_TRUE(check(b2, 38, 2));
-  EXPECT_TRUE(block_lists_are_consistent());
+  consistency_check();
 }
 
 TEST_F(MallocTest, CantMallocBiggerThanArena) {
   void *block = umm_.malloc(MallocTest::size + 1);
   ASSERT_EQ(block, nullptr);
-  EXPECT_TRUE(block_lists_are_consistent());
+  consistency_check();
 }
 
 TEST_F(MallocTest, CantMallocBiggerThanArenaLessOverhead) {
   void *block = umm_.malloc(MallocTest::size - 19);
   ASSERT_EQ(block, nullptr);
-  EXPECT_TRUE(block_lists_are_consistent());
+  consistency_check();
 }
 
 TEST_F(MallocTest, CanMallocateOneHugeBlock) {
   void *block = umm_.malloc(MallocTest::size - 20);
   ASSERT_NE(block, nullptr);
-  EXPECT_TRUE(block_lists_are_consistent());
+  consistency_check();
 }
 
 TEST_F(MallocTest, MallocOfSizeZeroIsNullPtr) {
   void *block = umm_.malloc(0);
   ASSERT_EQ(block, nullptr);
-  EXPECT_TRUE(block_lists_are_consistent());
+  consistency_check();
 }
