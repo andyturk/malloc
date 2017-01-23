@@ -11,7 +11,11 @@ struct MemoryAllocator {
   virtual void free(void *ptr) = 0;
 };
 
+struct MallocTest; // forward
+
 class Umm : public MemoryAllocator {
+  friend struct MallocTest;
+
 protected:
   using blockref_t = uint16_t;
     static constexpr blockref_t free_bit = 0x8000;
@@ -57,7 +61,7 @@ protected:
   unsigned index_from_block(const free_block_t &block) const {
     return &block - blocks_;
   }
-  
+
   void set_free(free_block_t &block, bool value) {
     if (value) {
       block.prev |= free_bit;
@@ -75,6 +79,17 @@ protected:
     }
   }
   
+  bool valid_internal_links(const free_block_t &block) const {
+    if (block.next >= block_count_) return false;
+    if ((block.prev & free_mask) >= block_count_) return false;
+
+    if (is_free(block)) {
+      if (block.next_free >= block_count_) return false;
+    }
+
+    return true;
+  }
+
   free_block_t *const blocks_;
   unsigned const block_count_;
 
@@ -425,30 +440,6 @@ public:
 
       b = &blocks_[b->next];
     } while (b > blocks_);
-  }
-
-  bool block_list_is_consistent() const {
-    unsigned used_size = 0;
-    unsigned free_size = 0;
-
-    free_block_t *block = &blocks_[1];
-    free_block_t *end = &blocks_[block_count_ - 1];
-    
-    while (block != end) {
-      unsigned s = size_in_blocks(*block);
-      
-      if (is_free(*block)) {
-        free_size += s;
-      } else {
-        used_size += s;
-      }
-
-      if (block->next >= block_count_) return false;
-      block = &block_from_index(block->next);
-    }
-
-    //    printf("used = %d, free = %d, actual = %d\n", used_size, free_size, block_count_);
-    return (free_size + used_size + 2) == block_count_;
   }
 };
 
