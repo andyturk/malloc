@@ -189,7 +189,47 @@ struct MallocTest : public testing::Test {
   SizedUmm<size> umm_;
 };
 
-TEST_F(MallocTest, ThreeBlocksFreeMultiple) {
+TEST_F(MallocTest, NullptrIsNotAPointer) {
+  ASSERT_FALSE(is_ptr(nullptr));
+}
+
+TEST_F(MallocTest, OneByte) {
+  void *block = umm_.malloc(1);
+  ASSERT_NE(block, nullptr);
+  EXPECT_TRUE(is_ptr(block));
+}
+
+TEST_F(MallocTest, SizeZeroIsNullPtr) {
+  void *block = umm_.malloc(0);
+  ASSERT_EQ(block, nullptr);
+  consistency_check();
+}
+
+TEST_F(MallocTest, OneHugeBlock) {
+  void *block = umm_.malloc(MallocTest::size - 20);
+  ASSERT_NE(block, nullptr);
+  consistency_check();
+}
+
+TEST_F(MallocTest, TestHugeBlockLimit) {
+  void *block = umm_.malloc(MallocTest::size - (20 - 1));
+  ASSERT_EQ(block, nullptr);
+  consistency_check();
+}
+
+TEST_F(MallocTest, MallocBiggerThanArena) {
+  void *block = umm_.malloc(MallocTest::size + 1);
+  ASSERT_EQ(block, nullptr);
+  consistency_check();
+}
+
+TEST_F(MallocTest, ThreeBlocksFreedInAllPossibleOrders) {
+  // specify three blocks of different sizes and contents
+  struct { void *ptr;  size_t len;  unsigned seed; } block[3] = {
+         {   nullptr,          27,              0  },  // block 0
+         {   nullptr,         200,              1  },  // block 1
+         {   nullptr,          38,              2  }}; // block 2
+
   // 6 ways to free all three
   vector<int> case_012 = {0, 1, 2};
   vector<int> case_021 = {0, 2, 1};
@@ -214,18 +254,13 @@ TEST_F(MallocTest, ThreeBlocksFreeMultiple) {
   // one way to free none
   vector<int> case_none = {};
 
-  auto everything = {case_012, case_021, case_102, case_120, case_201,
-                     case_210, case_01,  case_02,  case_10,  case_12,
-                     case_20,  case_21,  case_0,   case_1,   case_2,
-                     case_none};
+  // all the possible orders
+  auto all_sequences = {case_012, case_021, case_102, case_120,
+                        case_201, case_210, case_01,  case_02,
+                        case_10,  case_12,  case_20,  case_21,
+                        case_0,   case_1,   case_2,   case_none};
 
-  // define three blocks of different sizes and contents
-  struct { void *ptr;  size_t len;  unsigned seed; } block[3] = {
-         {   nullptr,          27,              0  },
-         {   nullptr,         200,              1  },
-         {   nullptr,          38,              2  }};
-
-  for (auto &sequence : everything) {
+  for (auto &sequence : all_sequences) {
     // re-initialize the allocator
     umm_.init();
 
@@ -236,64 +271,27 @@ TEST_F(MallocTest, ThreeBlocksFreeMultiple) {
 
     // free some blocks
     for (auto index : sequence) {
+      // make sure the test harness is working properly
+      ASSERT_TRUE(block[index].ptr != nullptr);
+
+      // free the desired block
       umm_.free(block[index].ptr);
+
+      // and remember that it was freed
       block[index].ptr = nullptr;
     }
 
     for (auto &b : block) {
       if (b.ptr != nullptr) {
+        // validate this block's structure
         EXPECT_TRUE(is_ptr(b.ptr));
+
+        // validate this block's contents
         EXPECT_TRUE(check(b.ptr, b.len, b.seed));
       }
     }
 
-    MallocTest::consistency_check();
+    // verify overall consistency
+    consistency_check();
   }
-}
-
-TEST_F(MallocTest, T0) {
-  ASSERT_FALSE(is_ptr(nullptr));
-}
-
-TEST_F(MallocTest, T1) {
-  void *b0 = malloc(27, 0);
-  ASSERT_NE(b0, nullptr);
-  ASSERT_TRUE(is_ptr(b0));
-
-  void *b1 = malloc(200, 1);
-  ASSERT_NE(b1, nullptr);
-  ASSERT_TRUE(is_ptr(b1));
-
-  void *b2 = malloc(38, 2);
-  ASSERT_NE(b2, nullptr);
-  ASSERT_TRUE(is_ptr(b2));
-
-  EXPECT_TRUE(check(b0, 27, 0));
-  EXPECT_TRUE(check(b1, 200, 1));
-  EXPECT_TRUE(check(b2, 38, 2));
-  consistency_check();
-}
-
-TEST_F(MallocTest, CantMallocBiggerThanArena) {
-  void *block = umm_.malloc(MallocTest::size + 1);
-  ASSERT_EQ(block, nullptr);
-  consistency_check();
-}
-
-TEST_F(MallocTest, CantMallocBiggerThanArenaLessOverhead) {
-  void *block = umm_.malloc(MallocTest::size - 19);
-  ASSERT_EQ(block, nullptr);
-  consistency_check();
-}
-
-TEST_F(MallocTest, CanMallocateOneHugeBlock) {
-  void *block = umm_.malloc(MallocTest::size - 20);
-  ASSERT_NE(block, nullptr);
-  consistency_check();
-}
-
-TEST_F(MallocTest, MallocOfSizeZeroIsNullPtr) {
-  void *block = umm_.malloc(0);
-  ASSERT_EQ(block, nullptr);
-  consistency_check();
 }
