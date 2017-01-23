@@ -47,6 +47,7 @@ struct BlumBlumShub {
 
 struct MallocTest : public testing::Test {
   static constexpr unsigned size = 8192;
+  static constexpr unsigned overhead = 2*Umm::block_size + offsetof(Umm::used_block_t, data);
 
   virtual void SetUp() override {
     umm_.init();
@@ -193,6 +194,18 @@ TEST_F(MallocTest, NullptrIsNotAPointer) {
   ASSERT_FALSE(is_ptr(nullptr));
 }
 
+TEST_F(MallocTest, FreeNullptrDoesNothing) {
+  size_t some_length = 100;
+  unsigned some_seed = 99;
+
+  void *block = malloc(some_length, some_seed);
+  consistency_check();
+
+  umm_.free(nullptr);
+
+  EXPECT_TRUE(check(block, some_length, some_seed));
+}
+
 TEST_F(MallocTest, OneByte) {
   void *block = umm_.malloc(1);
   ASSERT_NE(block, nullptr);
@@ -206,13 +219,13 @@ TEST_F(MallocTest, SizeZeroIsNullPtr) {
 }
 
 TEST_F(MallocTest, OneHugeBlock) {
-  void *block = umm_.malloc(MallocTest::size - 20);
+  void *block = umm_.malloc(MallocTest::size - overhead);
   ASSERT_NE(block, nullptr);
   consistency_check();
 }
 
 TEST_F(MallocTest, TestHugeBlockLimit) {
-  void *block = umm_.malloc(MallocTest::size - (20 - 1));
+  void *block = umm_.malloc(MallocTest::size - (overhead - 1));
   ASSERT_EQ(block, nullptr);
   consistency_check();
 }
