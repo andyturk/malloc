@@ -47,39 +47,57 @@ struct BlumBlumShub {
   }
 };
 
+/**
+ * class MallocTest
+ *
+ * A general purpose test harness for memory allocation.
+ */
 struct MallocTest : public testing::Test {
   static constexpr unsigned size = 8192;
-  static constexpr unsigned overhead = 2*Umm::block_size + offsetof(Umm::used_block_t, data);
+  static constexpr unsigned overhead =
+      2 * Umm::block_size + offsetof(Umm::used_block_t, data);
   using free_block_t = Umm::free_block_t;
+  using used_block_t = Umm::used_block_t;
 
+  /*
+   * Re-initialize the allocator before each test
+   */
   virtual void SetUp() override {
     umm_.init();
   }
 
+  /*
+   * Allocate a block and fill it with a random data generated from a seed
+   */
   virtual void *malloc(size_t size, unsigned seed) {
     uint8_t *storage = reinterpret_cast<uint8_t *>(umm_.malloc(size));
-    if (storage == nullptr) return nullptr;
+    if (storage == nullptr)
+      return nullptr;
 
     BlumBlumShub::fill(storage, size, seed);
     return storage;
   }
 
+  /*
+   * Verify that a previously allocated block has the same contents
+   */
   virtual bool check(const void *src, size_t length, unsigned seed) const {
-    return BlumBlumShub::check(reinterpret_cast<const uint8_t *>(src), length, seed);
+    return BlumBlumShub::check(reinterpret_cast<const uint8_t *>(src), length,
+                               seed);
   }
 
-  /**
+  /*
    * is_block
    *
-   * Tests whether a pointer actually refers to a valid used or free
-   * block. Valid pointers point within the block array and have the
+   * Tests whether a block reference actually refers to a valid used or free
+   * block. Valid blocks are within the block array and have the
    * same alignment as the block array base.
    *
    * Parameters:
-   *   ptr - a reference to something that might be a block
+   *   block - a reference to something that might be a block
    *
    * Returns:
-   *   true if the pointer is within the block array
+   *   true if the block is valid
    */
   bool is_block(const Umm::free_block_t &block) const {
     if (&block < umm_.blocks_) return false;
@@ -93,6 +111,17 @@ struct MallocTest : public testing::Test {
     return true;
   }
 
+  /*
+   * is_ptr
+   *
+   * Tests whether a pointer actually refers to an allocated block.
+   *
+   * Parameters:
+   *   ptr - a pointer to something that might be a used block
+   *
+   * Returns:
+   *   true if the pointer is valid used block
+   */
   bool is_ptr(const void *ptr) const {
     auto blockp = reinterpret_cast<const Umm::free_block_t *>(
         reinterpret_cast<const char *>(ptr) -
@@ -181,22 +210,31 @@ struct MallocTest : public testing::Test {
     return true;
   }
 
-  virtual void consistency_check() {
-    EXPECT_TRUE(block_lists_are_consistent());
-  }
-
+  /*
+   * Convert a pointer returned from malloc/realloc to its block
+   */
   Umm::free_block_t &block(void *ptr) const {
     return umm_.block_from_ptr(ptr);
   }
 
+  /*
+   * Given a block reference, get the next block in the array
+   */
   Umm::free_block_t &next(Umm::free_block_t &block) const {
     return umm_.blocks_[block.next];
   }
 
+  /*
+   * Given a block reference, get the previous block in the array
+   */
   Umm::free_block_t &prev(Umm::free_block_t &block) const {
     return umm_.blocks_[block.prev & Umm::free_mask];
   }
 
+  /*
+   * Walk the block list and calculate the sum of the free and used block sizes
+   * The 0th and last blocks are not included.
+   */
   void calculate_usage(unsigned &free_bytes, unsigned &used_bytes) const {
     free_bytes = 0;
     used_bytes = 0;
@@ -217,12 +255,18 @@ struct MallocTest : public testing::Test {
     }
   }
 
+  /*
+   * Free space in the array
+   */
   unsigned free_bytes() const {
     unsigned free, used;
     calculate_usage(free, used);
     return free;
   }
 
+  /*
+   * Allocated space in the array
+   */
   unsigned used_bytes() const {
     unsigned free, used;
     calculate_usage(free, used);
@@ -232,16 +276,22 @@ struct MallocTest : public testing::Test {
   SizedUmm<size> umm_;
 };
 
+/*
+ * An internal check to make sure nullptr is not valid
+ */
 TEST_F(MallocTest, NullptrIsNotAPointer) {
   ASSERT_FALSE(is_ptr(nullptr));
 }
 
+/*
+ * free(nullptr) can't do anything bad.
+ */
 TEST_F(MallocTest, FreeNullptrDoesNothing) {
   size_t some_length = 100;
   unsigned some_seed = 99;
 
   void *block = malloc(some_length, some_seed);
-  consistency_check();
+  EXPECT_TRUE(block_lists_are_consistent());
   unsigned free_before = free_bytes();
 
   umm_.free(nullptr);
@@ -251,24 +301,43 @@ TEST_F(MallocTest, FreeNullptrDoesNothing) {
   EXPECT_TRUE(check(block, some_length, some_seed));
 }
 
+/*
+ * Simple test to allocate a block with room for one byte
+ */
 TEST_F(MallocTest, MallocOneByte) {
   void *block = umm_.malloc(1);
   ASSERT_NE(block, nullptr);
   EXPECT_TRUE(is_ptr(block));
+  EXPECT_TRUE(block_lists_are_consistent());
 }
 
+/*
+ * Make sure that malloc(0) does nothing
+ */
 TEST_F(MallocTest, MallocSizeZeroIsNullPtr) {
+  unsigned free_before = free_bytes();
   void *block = umm_.malloc(0);
+  unsigned free_after = free_bytes();
+
   ASSERT_EQ(block, nullptr);
-  consistency_check();
+  EXPECT_TRUE(free_before == free_after);
+  EXPECT_TRUE(block_lists_are_consistent());
 }
 
+/*
+ * Allocate the largest possible block, which will be the free
+ * block starting at blocks_[1] in a freshly init'd array.
+ */
 TEST_F(MallocTest, MallocOneHugeBlock) {
   void *block = umm_.malloc(MallocTest::size - overhead);
   ASSERT_NE(block, nullptr);
-  consistency_check();
+  EXPECT_TRUE(block_lists_are_consistent());
 }
 
+/*
+ * Make sure that trying to allocate one byte more than the largest
+ * possible block actually fails.
+ */
 TEST_F(MallocTest, TestHugeBlockLimit) {
   unsigned free_before = free_bytes();
   void *block = umm_.malloc(MallocTest::size - (overhead - 1));
@@ -276,15 +345,25 @@ TEST_F(MallocTest, TestHugeBlockLimit) {
 
   EXPECT_EQ(free_before, free_after);
   EXPECT_EQ(block, nullptr);
-  consistency_check();
+  EXPECT_TRUE(block_lists_are_consistent());
 }
 
+/*
+ * Make sure that trying to allocate a block larger than the array itself
+ * actually fails.
+ */
 TEST_F(MallocTest, MallocBiggerThanArena) {
   void *block = umm_.malloc(MallocTest::size + 1);
   ASSERT_EQ(block, nullptr);
-  consistency_check();
+  EXPECT_TRUE(block_lists_are_consistent());
 }
 
+/*
+ * This is a somewhat complicated test that allocates three blocks,
+ * fills them with data, and then frees those three blocks in all
+ * possible orders. After each sub-test, the storage array is checked
+ * for consistency.
+ */
 TEST_F(MallocTest, ThreeBlocksFreedInAllPossibleOrders) {
   // specify three blocks of different sizes and contents
   struct { void *ptr;  size_t len;  unsigned seed; } block[3] = {
@@ -354,23 +433,33 @@ TEST_F(MallocTest, ThreeBlocksFreedInAllPossibleOrders) {
     }
 
     // verify overall consistency
-    consistency_check();
+    EXPECT_TRUE(block_lists_are_consistent());
   }
 }
 
+/*
+ * realloc(nullptr, size) should be the same as malloc(size)
+ */
 TEST_F(MallocTest, ReallocNullptrWithPositiveSizeSameAsMalloc) {
   unsigned size = 12;
+  unsigned free_before = free_bytes();
   auto ptr = reinterpret_cast<uint8_t *>(umm_.realloc(nullptr, size));
+  unsigned free_after = free_bytes();
 
-  ASSERT_NE(ptr, nullptr);
-  consistency_check();
+  EXPECT_NE(ptr, nullptr);
+  EXPECT_GT(free_before, free_after);
+  EXPECT_TRUE(block_lists_are_consistent());
 
   BlumBlumShub::fill(ptr, size, 1234);
 
   EXPECT_TRUE(is_ptr(ptr));
-  consistency_check();
+  EXPECT_TRUE(block_lists_are_consistent());
 }
 
+/*
+ * Reallocate a block to a smaller size when the previous
+ * neighboring block in the array is free.
+ */
 TEST_F(MallocTest, ReallocSmallerWhenPrevFree) {
   unsigned size = 100;
   unsigned seed0 = 123;
@@ -396,9 +485,13 @@ TEST_F(MallocTest, ReallocSmallerWhenPrevFree) {
 
   EXPECT_LT(free_before, free_after);
   EXPECT_TRUE(check(ptr0, size/2, seed0));
-  consistency_check();
+  EXPECT_TRUE(block_lists_are_consistent());
 }
 
+/*
+ * Reallocate a block to a smaller size when the next
+ * neighboring block in the array is free.
+ */
 TEST_F(MallocTest, ReallocSmallerWhenNextFree) {
   unsigned size = 100;
   unsigned seed0 = 123;
@@ -424,9 +517,13 @@ TEST_F(MallocTest, ReallocSmallerWhenNextFree) {
 
   EXPECT_LT(free_before, free_after);
   EXPECT_TRUE(check(ptr1, size/2, seed1));
-  consistency_check();
+  EXPECT_TRUE(block_lists_are_consistent());
 }
 
+/*
+ * Reallocate a block to a smaller size when both the next
+ * and previous neighboring blocks in the array are free.
+ */
 TEST_F(MallocTest, ReallocSmallerWhenNextAndPrevFree) {
   unsigned size = 100;
   unsigned seed0 = 123;
@@ -459,9 +556,12 @@ TEST_F(MallocTest, ReallocSmallerWhenNextAndPrevFree) {
 
   EXPECT_LT(free_before, free_after);
   EXPECT_TRUE(check(ptr1, size/2, seed1));
-  consistency_check();
+  EXPECT_TRUE(block_lists_are_consistent());
 }
 
+/*
+ * Reallocate a block to a larger size.
+ */
 TEST_F(MallocTest, ReallocLarger) {
   unsigned size = 100;
   unsigned seed0 = 123;
@@ -476,19 +576,45 @@ TEST_F(MallocTest, ReallocLarger) {
 
   EXPECT_GT(free_before, free_after);
   EXPECT_TRUE(check(ptr0, size, seed0));
-  consistency_check();
+  EXPECT_TRUE(block_lists_are_consistent());
 }
 
+/*
+ * Calling realloc(ptr, 0) is the same as free(ptr)
+ */
 TEST_F(MallocTest, ReallocToZeroSizeSameAsFree) {
   size_t some_length = 100;
   unsigned some_seed = 99;
 
   void *ptr = malloc(some_length, some_seed);
-  consistency_check();
+  EXPECT_TRUE(block_lists_are_consistent());
 
   unsigned free_before = free_bytes();
   umm_.realloc(ptr, 0);
   unsigned free_after = free_bytes();
 
   EXPECT_LT(free_before, free_after);
+}
+
+TEST_F(MallocTest, ReallocNullptrZeroSize) {
+  unsigned free_before = free_bytes();
+  umm_.realloc(nullptr, 0);
+  unsigned free_after = free_bytes();
+
+  EXPECT_EQ(free_before, free_after);
+  EXPECT_TRUE(block_lists_are_consistent());
+
+  // try it again with a used block in the array
+
+  size_t some_length = 100;
+  unsigned some_seed = 99;
+  void *ptr = malloc(some_length, some_seed);
+  (void) ptr;
+
+  free_before = free_bytes();
+  umm_.realloc(nullptr, 0);
+  free_after = free_bytes();
+
+  EXPECT_EQ(free_before, free_after);
+  EXPECT_TRUE(block_lists_are_consistent());
 }
