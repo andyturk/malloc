@@ -112,22 +112,30 @@ struct MallocTest : public testing::Test {
   }
 
   /*
-   * is_ptr
+   * validate_ptr
    *
-   * Tests whether a pointer actually refers to an allocated block.
+   * Verifies that a pointer actually refers to an allocated block.
    *
    * Parameters:
-   *   ptr - a pointer to something that might be a used block
-   *
-   * Returns:
-   *   true if the pointer is valid used block
+   *   ptr - a pointer to something that should be a used block
    */
-  bool is_ptr(const void *ptr) const {
-    auto blockp = reinterpret_cast<const Umm::free_block_t *>(
-        reinterpret_cast<const char *>(ptr) -
-        offsetof(Umm::used_block_t, data));
+  void validate_ptr(const void *ptr) const {
+    auto blockp =
+        const_cast<free_block_t *>(reinterpret_cast<const Umm::free_block_t *>(
+            reinterpret_cast<const char *>(ptr) -
+            offsetof(Umm::used_block_t, data)));
 
-    return is_block(*blockp) && !umm_.is_free(*blockp);
+    ASSERT_TRUE(is_block(*blockp));
+    ASSERT_TRUE(!umm_.is_free(*blockp));
+
+    // check for valid links
+
+    unsigned index = umm_.index_from_block(*blockp);
+    const free_block_t &previous = prev(*blockp);
+    const free_block_t &following = next(*blockp);
+
+    ASSERT_EQ(previous.next, index);
+    ASSERT_EQ(following.prev & Umm::free_mask, index);
   }
 
   /**
@@ -277,14 +285,7 @@ struct MallocTest : public testing::Test {
 };
 
 /*
- * An internal check to make sure nullptr is not valid
- */
-TEST_F(MallocTest, NullptrIsNotAPointer) {
-  ASSERT_FALSE(is_ptr(nullptr));
-}
-
-/*
- * free(nullptr) can't do anything bad.
+ * free(nullptr) shouldn't do anything bad.
  */
 TEST_F(MallocTest, FreeNullptrDoesNothing) {
   size_t some_length = 100;
@@ -297,7 +298,7 @@ TEST_F(MallocTest, FreeNullptrDoesNothing) {
   umm_.free(nullptr);
   unsigned free_after = free_bytes();
 
-  EXPECT_TRUE(free_before == free_after);
+  EXPECT_EQ(free_before, free_after);
   EXPECT_TRUE(check(block, some_length, some_seed));
 }
 
@@ -307,7 +308,7 @@ TEST_F(MallocTest, FreeNullptrDoesNothing) {
 TEST_F(MallocTest, MallocOneByte) {
   void *block = umm_.malloc(1);
   ASSERT_NE(block, nullptr);
-  EXPECT_TRUE(is_ptr(block));
+  validate_ptr(block);
   EXPECT_TRUE(block_lists_are_consistent());
 }
 
@@ -425,7 +426,7 @@ TEST_F(MallocTest, ThreeBlocksFreedInAllPossibleOrders) {
     for (auto &b : block) {
       if (b.ptr != nullptr) {
         // validate this block's structure
-        EXPECT_TRUE(is_ptr(b.ptr));
+        validate_ptr(b.ptr);
 
         // validate this block's contents
         EXPECT_TRUE(check(b.ptr, b.len, b.seed));
@@ -452,7 +453,7 @@ TEST_F(MallocTest, ReallocNullptrWithPositiveSizeSameAsMalloc) {
 
   BlumBlumShub::fill(ptr, size, 1234);
 
-  EXPECT_TRUE(is_ptr(ptr));
+  validate_ptr(ptr);
   EXPECT_TRUE(block_lists_are_consistent());
 }
 
