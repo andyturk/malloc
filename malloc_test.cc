@@ -34,11 +34,13 @@ struct BlumBlumShub {
   static bool check(const uint8_t *src, size_t length, unsigned seed) {
     unsigned x = fix_seed(seed);
 
-    while (length--) {
+    for (unsigned i=0; i < length; ++i) {
       x = (x * x) % m;
 
-      if (static_cast<uint8_t>(x) != *src++)
+      if (static_cast<uint8_t>(x) != src[i]) {
+        printf("check fails at byte %d\n", i);
         return false;
+      }
     }
 
     return true;
@@ -48,6 +50,7 @@ struct BlumBlumShub {
 struct MallocTest : public testing::Test {
   static constexpr unsigned size = 8192;
   static constexpr unsigned overhead = 2*Umm::block_size + offsetof(Umm::used_block_t, data);
+  using free_block_t = Umm::free_block_t;
 
   virtual void SetUp() override {
     umm_.init();
@@ -194,6 +197,38 @@ struct MallocTest : public testing::Test {
     return umm_.blocks_[block.prev & Umm::free_mask];
   }
 
+  void calculate_usage(unsigned &free_bytes, unsigned &used_bytes) const {
+    free_bytes = 0;
+    used_bytes = 0;
+
+    free_block_t *block = &umm_.blocks_[1];
+    free_block_t *last = &umm_.blocks_[umm_.block_count_ - 1];
+
+    while (block < last) {
+      unsigned size = umm_.size_in_blocks(*block)*Umm::block_size;
+
+      if (umm_.is_free(*block)) {
+        free_bytes += size;
+      } else {
+        used_bytes += size;
+      }
+
+      block = &next(*block);
+    }
+  }
+
+  unsigned free_bytes() const {
+    unsigned free, used;
+    calculate_usage(free, used);
+    return free;
+  }
+
+  unsigned used_bytes() const {
+    unsigned free, used;
+    calculate_usage(free, used);
+    return used;
+  }
+
   SizedUmm<size> umm_;
 };
 
@@ -207,33 +242,40 @@ TEST_F(MallocTest, FreeNullptrDoesNothing) {
 
   void *block = malloc(some_length, some_seed);
   consistency_check();
+  unsigned free_before = free_bytes();
 
   umm_.free(nullptr);
+  unsigned free_after = free_bytes();
 
+  EXPECT_TRUE(free_before == free_after);
   EXPECT_TRUE(check(block, some_length, some_seed));
 }
 
-TEST_F(MallocTest, OneByte) {
+TEST_F(MallocTest, MallocOneByte) {
   void *block = umm_.malloc(1);
   ASSERT_NE(block, nullptr);
   EXPECT_TRUE(is_ptr(block));
 }
 
-TEST_F(MallocTest, SizeZeroIsNullPtr) {
+TEST_F(MallocTest, MallocSizeZeroIsNullPtr) {
   void *block = umm_.malloc(0);
   ASSERT_EQ(block, nullptr);
   consistency_check();
 }
 
-TEST_F(MallocTest, OneHugeBlock) {
+TEST_F(MallocTest, MallocOneHugeBlock) {
   void *block = umm_.malloc(MallocTest::size - overhead);
   ASSERT_NE(block, nullptr);
   consistency_check();
 }
 
 TEST_F(MallocTest, TestHugeBlockLimit) {
+  unsigned free_before = free_bytes();
   void *block = umm_.malloc(MallocTest::size - (overhead - 1));
-  ASSERT_EQ(block, nullptr);
+  unsigned free_after = free_bytes();
+
+  EXPECT_EQ(free_before, free_after);
+  EXPECT_EQ(block, nullptr);
   consistency_check();
 }
 
@@ -318,16 +360,135 @@ TEST_F(MallocTest, ThreeBlocksFreedInAllPossibleOrders) {
 
 TEST_F(MallocTest, ReallocNullptrWithPositiveSizeSameAsMalloc) {
   unsigned size = 12;
-  auto block = reinterpret_cast<uint8_t *>(umm_.realloc(nullptr, size));
+  auto ptr = reinterpret_cast<uint8_t *>(umm_.realloc(nullptr, size));
 
-  ASSERT_NE(block, nullptr);
+  ASSERT_NE(ptr, nullptr);
   consistency_check();
 
-  for (unsigned i=0; i < size; ++i) {
-    block[i] = 0xff;
-  }
+  BlumBlumShub::fill(ptr, size, 1234);
 
-  umm_.dump();
-  EXPECT_TRUE(is_ptr(block));
+  EXPECT_TRUE(is_ptr(ptr));
   consistency_check();
+}
+
+TEST_F(MallocTest, ReallocSmallerWhenPrevFree) {
+  unsigned size = 100;
+  unsigned seed0 = 123;
+  unsigned seed1 = 456;
+
+  void *ptr0 = malloc(size, seed0);
+  void *ptr1 = malloc(size, seed1);
+
+  EXPECT_TRUE(check(ptr0, size, seed0));
+  EXPECT_TRUE(check(ptr1, size, seed1));
+  EXPECT_LT(ptr1, ptr0);
+
+  free_block_t &block0 = block(ptr0);
+  free_block_t &block1 = block(ptr1);
+
+  EXPECT_TRUE(&block1 == &prev(block0));
+
+  umm_.free(ptr1);
+
+  unsigned free_before = free_bytes();
+  ptr0 = umm_.realloc(ptr0, size/2);
+  unsigned free_after = free_bytes();
+
+  EXPECT_LT(free_before, free_after);
+  EXPECT_TRUE(check(ptr0, size/2, seed0));
+  consistency_check();
+}
+
+TEST_F(MallocTest, ReallocSmallerWhenNextFree) {
+  unsigned size = 100;
+  unsigned seed0 = 123;
+  unsigned seed1 = 456;
+
+  void *ptr0 = malloc(size, seed0);
+  void *ptr1 = malloc(size, seed1);
+
+  EXPECT_TRUE(check(ptr0, size, seed0));
+  EXPECT_TRUE(check(ptr1, size, seed1));
+  EXPECT_LT(ptr1, ptr0);
+
+  free_block_t &block0 = block(ptr0);
+  free_block_t &block1 = block(ptr1);
+
+  EXPECT_TRUE(&block1 == &prev(block0));
+
+  umm_.free(ptr0);
+
+  unsigned free_before = free_bytes();
+  ptr1 = umm_.realloc(ptr1, size/2);
+  unsigned free_after = free_bytes();
+
+  EXPECT_LT(free_before, free_after);
+  EXPECT_TRUE(check(ptr1, size/2, seed1));
+  consistency_check();
+}
+
+TEST_F(MallocTest, ReallocSmallerWhenNextAndPrevFree) {
+  unsigned size = 100;
+  unsigned seed0 = 123;
+  unsigned seed1 = 456;
+  unsigned seed2 = 789;
+
+  void *ptr0 = malloc(size, seed0);
+  void *ptr1 = malloc(size, seed1);
+  void *ptr2 = malloc(size, seed2);
+
+  EXPECT_TRUE(check(ptr0, size, seed0));
+  EXPECT_TRUE(check(ptr1, size, seed1));
+  EXPECT_TRUE(check(ptr2, size, seed2));
+  EXPECT_TRUE(ptr1 < ptr0);
+  EXPECT_TRUE(ptr2 < ptr1);
+
+  free_block_t &block0 = block(ptr0);
+  free_block_t &block1 = block(ptr1);
+  free_block_t &block2 = block(ptr2);
+
+  EXPECT_TRUE(&block1 == &prev(block0));
+  EXPECT_TRUE(&block2 == &prev(block1));
+
+  umm_.free(ptr0);
+  umm_.free(ptr2);
+
+  unsigned free_before = free_bytes();
+  ptr1 = umm_.realloc(ptr1, size/2);
+  unsigned free_after = free_bytes();
+
+  EXPECT_LT(free_before, free_after);
+  EXPECT_TRUE(check(ptr1, size/2, seed1));
+  consistency_check();
+}
+
+TEST_F(MallocTest, ReallocLarger) {
+  unsigned size = 100;
+  unsigned seed0 = 123;
+
+  void *ptr0 = malloc(size, seed0);
+
+  EXPECT_TRUE(check(ptr0, size, seed0));
+
+  unsigned free_before = free_bytes();
+  ptr0 = umm_.realloc(ptr0, 2*size);
+  unsigned free_after = free_bytes();
+
+  EXPECT_GT(free_before, free_after);
+  EXPECT_TRUE(check(ptr0, size, seed0));
+  consistency_check();
+}
+
+TEST_F(MallocTest, ReallocToZeroSizeSameAsFree) {
+  size_t some_length = 100;
+  unsigned some_seed = 99;
+
+  void *ptr = malloc(some_length, some_seed);
+  consistency_check();
+
+  unsigned free_before = free_bytes();
+  umm_.realloc(ptr, 0);
+  unsigned free_after = free_bytes();
+
+  EXPECT_LT(free_before, free_after);
 }

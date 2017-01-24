@@ -329,15 +329,16 @@ public:
 
         return ptr_from_block(block);
       } else if (is_free(prev)) {
-        // shift the kept portion to the end, split the block, and merge the
-        // initial chunk with the previous free block
+        // new location will be at the end of the current block
+        used_block_t &tail = *reinterpret_cast<used_block_t *>(blocks_ + block.next - new_size);
 
-        void *dst = reinterpret_cast<used_block_t *>(
-                        (blocks_ + block.next - current_size))
-                        ->data;
-        memmove(dst, ptr, new_size_in_bytes);
+        // shift the kept portion to the end
+        memmove(tail.data, ptr, new_size_in_bytes);
 
-        used_block_t &tail = split_tail(block, new_size);
+        // split the block
+        /* &tail == */ split_tail(block, new_size);
+
+        // merge the previous (free) block with the unused portion
         join(prev, block);
         return tail.data;
       } else {
