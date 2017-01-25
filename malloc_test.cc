@@ -753,7 +753,12 @@ TEST_F(MallocTest, RandomExtraviganza) {
       break;
     }
 
-    ASSERT_TRUE(block[which_block].ptr == nullptr || validate_ptr(block[which_block].ptr));
+    if (block[which_block].ptr != nullptr) {
+      ASSERT_TRUE(validate_ptr(block[which_block].ptr));
+      ASSERT_TRUE(check(block[which_block].ptr, block[which_block].len,
+                        block[which_block].seed));
+    }
+
     ASSERT_TRUE(block_lists_are_consistent());
   }
 }
