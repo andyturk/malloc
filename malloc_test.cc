@@ -1,5 +1,6 @@
 #include <array>
 #include <vector>
+#include <cstdlib>
 
 #include "gtest/gtest.h"
 #include "malloc.h"
@@ -32,14 +33,16 @@ struct BlumBlumShub {
   }
 
   static bool check(const uint8_t *src, size_t length, unsigned seed) {
-    unsigned x = fix_seed(seed);
+    if (src != nullptr && length > 0) {
+      unsigned x = fix_seed(seed);
 
-    for (unsigned i=0; i < length; ++i) {
-      x = (x * x) % m;
+      for (unsigned i = 0; i < length; ++i) {
+        x = (x * x) % m;
 
-      if (static_cast<uint8_t>(x) != src[i]) {
-        printf("check fails at byte %d\n", i);
-        return false;
+        if (static_cast<uint8_t>(x) != src[i]) {
+          printf("check fails at byte %d\n", i);
+          return false;
+        }
       }
     }
 
@@ -71,6 +74,15 @@ struct MallocTest : public testing::Test {
    */
   virtual void *malloc(size_t size, unsigned seed) {
     uint8_t *storage = reinterpret_cast<uint8_t *>(umm_.malloc(size));
+    if (storage == nullptr)
+      return nullptr;
+
+    BlumBlumShub::fill(storage, size, seed);
+    return storage;
+  }
+
+  virtual void *realloc(void *ptr, size_t size, unsigned seed) {
+    uint8_t *storage = reinterpret_cast<uint8_t *>(umm_.realloc(ptr, size));
     if (storage == nullptr)
       return nullptr;
 
@@ -119,14 +131,14 @@ struct MallocTest : public testing::Test {
    * Parameters:
    *   ptr - a pointer to something that should be a used block
    */
-  void validate_ptr(const void *ptr) const {
+  bool validate_ptr(const void *ptr) const {
     auto blockp =
         const_cast<free_block_t *>(reinterpret_cast<const Umm::free_block_t *>(
             reinterpret_cast<const char *>(ptr) -
             offsetof(Umm::used_block_t, data)));
 
-    ASSERT_TRUE(is_block(*blockp));
-    ASSERT_TRUE(!umm_.is_free(*blockp));
+    if (!is_block(*blockp)) return false;
+    if (umm_.is_free(*blockp)) return false;
 
     // check for valid links
 
@@ -134,8 +146,10 @@ struct MallocTest : public testing::Test {
     const free_block_t &previous = prev(*blockp);
     const free_block_t &following = next(*blockp);
 
-    ASSERT_EQ(previous.next, index);
-    ASSERT_EQ(following.prev & Umm::free_mask, index);
+    if (previous.next != index) return false;
+    if ((following.prev & Umm::free_mask) != index) return false;
+
+    return true;
   }
 
   /**
@@ -164,6 +178,7 @@ struct MallocTest : public testing::Test {
     if (last.next != 0) return false;
 
     auto block = &umm_.blocks_[1];
+    unsigned free_block_count = 0;
 
     while (block != &last) {
       if (!umm_.valid_internal_links(*block)) {
@@ -175,6 +190,7 @@ struct MallocTest : public testing::Test {
 
       if (umm_.is_free(*block)) {
         free_size += s;
+        free_block_count += 1;
       } else {
         used_size += s;
       }
@@ -202,16 +218,28 @@ struct MallocTest : public testing::Test {
       return false;
     }
 
-    block = &umm_.block_from_index(umm_.blocks_[0].next_free);
+    block = &umm_.block_from_index(first.next_free);
     unsigned free_list_total = 0;
+    unsigned free_list_walk_count = 0;
 
     while (block != &first) {
+      free_list_walk_count += 1;
       free_list_total += umm_.size_in_blocks(*block);
       block = &umm_.block_from_index(block->next_free);
     }
 
+    if (free_block_count != free_list_walk_count) {
+      printf("found %d free blocks on the main list, and %d on the free list\n",
+             free_block_count,
+             free_list_walk_count);
+      return false;
+    }
+
     if (free_list_total != free_size) {
-      printf("blocks missing from free list\n");
+      printf("expected %d free blocks, but found %d\n", free_list_total, free_size);
+      printf("found %d free blocks on the main list, and %d on the free list\n",
+             free_block_count,
+             free_list_walk_count);
       return false;
     }
 
@@ -237,6 +265,14 @@ struct MallocTest : public testing::Test {
    */
   Umm::free_block_t &prev(Umm::free_block_t &block) const {
     return umm_.blocks_[block.prev & Umm::free_mask];
+  }
+
+  /*
+   * Convert a pointer returned from malloc/realloc to an index
+   * within the block array.
+   */
+  unsigned index(void *ptr) const {
+    return &block(ptr) - umm_.blocks_;
   }
 
   /*
@@ -308,7 +344,7 @@ TEST_F(MallocTest, FreeNullptrDoesNothing) {
 TEST_F(MallocTest, MallocOneByte) {
   void *block = umm_.malloc(1);
   ASSERT_NE(block, nullptr);
-  validate_ptr(block);
+  EXPECT_TRUE(validate_ptr(block));
   EXPECT_TRUE(block_lists_are_consistent());
 }
 
@@ -426,7 +462,7 @@ TEST_F(MallocTest, ThreeBlocksFreedInAllPossibleOrders) {
     for (auto &b : block) {
       if (b.ptr != nullptr) {
         // validate this block's structure
-        validate_ptr(b.ptr);
+        EXPECT_TRUE(validate_ptr(b.ptr));
 
         // validate this block's contents
         EXPECT_TRUE(check(b.ptr, b.len, b.seed));
@@ -444,7 +480,7 @@ TEST_F(MallocTest, ThreeBlocksFreedInAllPossibleOrders) {
 TEST_F(MallocTest, ReallocNullptrWithPositiveSizeSameAsMalloc) {
   unsigned size = 12;
   unsigned free_before = free_bytes();
-  auto ptr = reinterpret_cast<uint8_t *>(umm_.realloc(nullptr, size));
+  auto ptr = reinterpret_cast<uint8_t *>(realloc(nullptr, size, 0));
   unsigned free_after = free_bytes();
 
   EXPECT_NE(ptr, nullptr);
@@ -453,7 +489,7 @@ TEST_F(MallocTest, ReallocNullptrWithPositiveSizeSameAsMalloc) {
 
   BlumBlumShub::fill(ptr, size, 1234);
 
-  validate_ptr(ptr);
+  EXPECT_TRUE(validate_ptr(ptr));
   EXPECT_TRUE(block_lists_are_consistent());
 }
 
@@ -594,7 +630,7 @@ TEST_F(MallocTest, ReallocToZeroSizeSameAsFree) {
   umm_.realloc(ptr, 0);
   unsigned free_after = free_bytes();
 
-  EXPECT_LT(free_before, free_after);
+  EXPECT_GT((free_before - free_after), some_length);
 }
 
 TEST_F(MallocTest, ReallocNullptrZeroSize) {
@@ -618,4 +654,104 @@ TEST_F(MallocTest, ReallocNullptrZeroSize) {
 
   EXPECT_EQ(free_before, free_after);
   EXPECT_TRUE(block_lists_are_consistent());
+}
+
+TEST_F(MallocTest, RandomExtraviganza) {
+  enum verb {
+    allocate,
+    free,
+    reallocate
+  };
+
+  const char *names[] = {"malloc", "free", "realloc"};
+  (void) names;
+
+  constexpr unsigned blocks = 50;
+  constexpr unsigned max_block_size = 2560;
+  constexpr unsigned iterations = 1000000;
+
+  struct {
+    void *ptr;
+    size_t len;
+    unsigned seed;
+  } block[blocks];
+
+  for (unsigned i=0; i < blocks; ++i) {
+    block[i].ptr = nullptr;
+  }
+
+  // use same random number generator seed for repeatability
+  srand(20170124);
+
+  for (unsigned i=0; i < iterations; ++i) {
+    // pick a random action
+    verb v = static_cast<verb>((rand() % 3));
+
+    // pick a random block to operate on
+    unsigned b = rand() % blocks;
+
+    // pick a random size
+    unsigned s = rand() % max_block_size;
+    unsigned seed = rand();
+
+    switch (v) {
+    case allocate : {
+      // allocate a new block here
+      if (block[b].ptr != nullptr) {
+        // get rid of the old one first
+        ASSERT_TRUE(check(block[b].ptr, block[b].len, block[b].seed));
+        umm_.free(block[b].ptr);
+      }
+
+      block[b].len = 0;
+      block[b].seed = 0;
+      block[b].ptr = malloc(s, seed);
+
+      if (block[b].ptr != nullptr) {
+        block[b].len = s;
+        block[b].seed = seed;
+      }
+      break;
+    }
+
+    case reallocate: {
+      if (block[b].ptr != nullptr) {
+        // check previous block before realloc
+        ASSERT_TRUE(check(block[b].ptr, block[b].len, block[b].seed));
+      }
+
+      void *new_ptr = realloc(block[b].ptr, s, seed);
+
+      if (s == 0) {
+        // realloc(_, 0) frees the block
+        block[b].ptr = nullptr;
+        block[b].len = 0;
+        block[b].seed = 0;
+      } else if (new_ptr != nullptr) {
+        // realloc(_, n>0) reallocated memory
+        block[b].ptr = new_ptr;
+        block[b].len = s;
+        block[b].seed = seed;
+      } else {
+        // realloc(_, n>0) failed, so the original block is unchanged
+      }
+
+      break;
+    }
+
+    case free :
+      umm_.free(block[b].ptr);
+      block[b].ptr = nullptr;
+      block[b].len = 0;
+      break;
+    }
+
+    if (block[b].ptr != nullptr && !validate_ptr(block[b].ptr)) {
+      printf("failure at step %d: %s slot %d (block %d)\n", i, names[v], b,
+             (block[b].ptr != nullptr ? index(block[b].ptr) : -1));
+    }
+
+    ASSERT_TRUE(block[b].ptr == nullptr || validate_ptr(block[b].ptr));
+    ASSERT_TRUE(block_lists_are_consistent());
+  }
 }
