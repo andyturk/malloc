@@ -633,6 +633,9 @@ TEST_F(MallocTest, ReallocToZeroSizeSameAsFree) {
   EXPECT_GT((free_before - free_after), some_length);
 }
 
+/*
+ * Calling realloc(0, 0) should do nothing
+ */
 TEST_F(MallocTest, ReallocNullptrZeroSize) {
   unsigned free_before = free_bytes();
   umm_.realloc(nullptr, 0);
@@ -656,6 +659,10 @@ TEST_F(MallocTest, ReallocNullptrZeroSize) {
   EXPECT_TRUE(block_lists_are_consistent());
 }
 
+/*
+ * This test performs a (quite long) sequence of random memory allocation
+ * operations and checks the consistency of the allocator after each one.
+ */
 TEST_F(MallocTest, RandomExtraviganza) {
   enum verb {
     allocate,
@@ -663,11 +670,9 @@ TEST_F(MallocTest, RandomExtraviganza) {
     reallocate
   };
 
-  const char *names[] = {"malloc", "free", "realloc"};
-  (void) names;
-
+  constexpr unsigned operations = reallocate + 1;
   constexpr unsigned blocks = 50;
-  constexpr unsigned max_block_size = 2560;
+  constexpr unsigned max_block_size = 256;
   constexpr unsigned iterations = 1000000;
 
   struct {
@@ -684,74 +689,71 @@ TEST_F(MallocTest, RandomExtraviganza) {
   srand(20170124);
 
   for (unsigned i=0; i < iterations; ++i) {
-    // pick a random action
-    verb v = static_cast<verb>((rand() % 3));
+    // pick randomly from one of the three possible operations
+    verb operation = static_cast<verb>(rand() % operations);
 
     // pick a random block to operate on
-    unsigned b = rand() % blocks;
+    unsigned which_block = rand() % blocks;
 
-    // pick a random size
-    unsigned s = rand() % max_block_size;
-    unsigned seed = rand();
+    // pick a random size for the next allocation operation
+    unsigned new_size = rand() % max_block_size;
 
-    switch (v) {
-    case allocate : {
-      // allocate a new block here
-      if (block[b].ptr != nullptr) {
+    // pick a random seed to generate its contents
+    unsigned random_seed = rand();
+
+    switch (operation) {
+    case allocate :
+      if (block[which_block].ptr != nullptr) {
         // get rid of the old one first
-        ASSERT_TRUE(check(block[b].ptr, block[b].len, block[b].seed));
-        umm_.free(block[b].ptr);
+        ASSERT_TRUE(check(block[which_block].ptr, block[which_block].len,
+                          block[which_block].seed));
+        umm_.free(block[which_block].ptr);
       }
 
-      block[b].len = 0;
-      block[b].seed = 0;
-      block[b].ptr = malloc(s, seed);
+      block[which_block].ptr = malloc(new_size, random_seed);
 
-      if (block[b].ptr != nullptr) {
-        block[b].len = s;
-        block[b].seed = seed;
+      if (block[which_block].ptr != nullptr) {
+        block[which_block].len = new_size;
+        block[which_block].seed = random_seed;
+      } else {
+        block[which_block].len = 0;
+        block[which_block].seed = 0;
       }
       break;
-    }
 
     case reallocate: {
-      if (block[b].ptr != nullptr) {
+      if (block[which_block].ptr != nullptr) {
         // check previous block before realloc
-        ASSERT_TRUE(check(block[b].ptr, block[b].len, block[b].seed));
+        ASSERT_TRUE(check(block[which_block].ptr, block[which_block].len,
+                          block[which_block].seed));
       }
 
-      void *new_ptr = realloc(block[b].ptr, s, seed);
+      void *new_ptr = realloc(block[which_block].ptr, new_size, random_seed);
 
-      if (s == 0) {
+      if (new_size == 0) {
         // realloc(_, 0) frees the block
-        block[b].ptr = nullptr;
-        block[b].len = 0;
-        block[b].seed = 0;
+        block[which_block].ptr = nullptr;
+        block[which_block].len = 0;
+        block[which_block].seed = 0;
       } else if (new_ptr != nullptr) {
         // realloc(_, n>0) reallocated memory
-        block[b].ptr = new_ptr;
-        block[b].len = s;
-        block[b].seed = seed;
+        block[which_block].ptr = new_ptr;
+        block[which_block].len = new_size;
+        block[which_block].seed = random_seed;
       } else {
         // realloc(_, n>0) failed, so the original block is unchanged
       }
-
       break;
     }
 
     case free :
-      umm_.free(block[b].ptr);
-      block[b].ptr = nullptr;
-      block[b].len = 0;
+      umm_.free(block[which_block].ptr);
+      block[which_block].ptr = nullptr;
+      block[which_block].len = 0;
       break;
     }
 
-    if (block[b].ptr != nullptr && !validate_ptr(block[b].ptr)) {
-      printf("failure at step %d: %s slot %d (block %d)\n", i, names[v], b,
-             (block[b].ptr != nullptr ? index(block[b].ptr) : -1));
-    }
-
-    ASSERT_TRUE(block[b].ptr == nullptr || validate_ptr(block[b].ptr));
+    ASSERT_TRUE(block[which_block].ptr == nullptr || validate_ptr(block[which_block].ptr));
     ASSERT_TRUE(block_lists_are_consistent());
   }
 }
