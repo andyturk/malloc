@@ -408,10 +408,14 @@ public:
       join(prev, block);
     } else {
       // add this block to the head of the free list
+      unsigned index = &block - blocks_;
+
       block.next_free = blocks_[0].next_free;
       block.prev_free = 0;
       set_free(block, true);
-      blocks_[0].next_free = &block - blocks_;
+
+      blocks_[blocks_[0].next_free].prev_free = index;
+      blocks_[0].next_free = index;
     }
   }
 
