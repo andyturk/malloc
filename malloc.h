@@ -1,3 +1,24 @@
+// The MIT License (MIT)
+//
+// Copyright (c) 2017 Andy Turk
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy of
+// this software and associated documentation files (the "Software"), to deal in
+// the Software without restriction, including without limitation the rights to
+// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+// the Software, and to permit persons to whom the Software is furnished to do so,
+// subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 #pragma once
 
 #include <cassert>
@@ -5,9 +26,54 @@
 #include <cstdint>
 #include <iterator>
 
+/**
+ * MemoryAllocator
+ *
+ * Abstract interface for a memory allocator.
+ */
 struct MemoryAllocator {
+  /**
+   * malloc
+   *
+   * Allocates a contiguous block of memory.
+   *
+   * Parameters:
+   *  size - size in bytes of the requested allocation
+   *
+   * Returns
+   *  A non-zero pointer to memory upon success
+   *  nullptr if the request cannot be satisfied
+   */
   virtual void *malloc(size_t size) = 0;
+
+  /**
+   * realloc
+   *
+   * Changes the size of a previously allocated block of memory, possibly
+   * copying the contents to a new location. Passing 0 for the first argument
+   * is the same as calling malloc(size). Passing 0 for the second argument
+   * is the same as calling free(ptr).
+   *
+   * Parameters
+   *
+   *   ptr  - a non-zero pointer previously returned from malloc or realloc
+   *   size - the requested size for the new block
+   *
+   * Returns
+   *   Non-zero if the request could be satisfied with a new block or by using
+   *   the existing block.
+   *   Zero if the request could not be satisfied. If the return value is zero
+   *   when both ptr and size are non-zero, the original block of memory is
+   *   left intact.
+   */
   virtual void *realloc(void *ptr, size_t new_size) = 0;
+
+  /**
+   * free
+   *
+   * Deallocates a block of memory previously returned by malloc() or realloc().
+   * Passing 0 as the argument is allowed and does nothing.
+   */
   virtual void free(void *ptr) = 0;
 };
 
