@@ -320,6 +320,51 @@ struct MallocTest : public testing::Test {
   SizedUmm<size> umm_;
 };
 
+class RandomMallocTest : public MallocTest {
+protected:
+  enum operations_t {
+    allocate,
+    free,
+    reallocate
+  };
+
+  const char *operation_names_[] = {"malloc", "free", "realloc"};
+
+  struct block_info_t {
+    void *ptr;
+    size_t len;
+    unsigned seed;
+    unsigned count;
+  };
+
+  constexpr unsigned block_count = 50;
+  constexpr unsigned max_block_size = 256;
+  constexpr unsigned max_rounds = 1000000;
+
+  block_info_t block_info_[block_count];
+  verb next_operation_;
+  size_t next_size_;
+  unsigned next_seed_;
+
+  RandomMallocTest() : MallocTest() {
+    for (unsigned i = 0; i < block_count; ++i) {
+      block_info_[i].ptr = nullptr;
+      block_info_[i].len = 0;
+      block_info_[i].seed = 0;
+      block_info_[i].count = 0;
+    }
+
+    // use same random number generator seed for repeatability
+    srand(20170124);
+  }
+
+  void next() {
+    next_operation_ = rand() % 3;
+    next_size_ = rand() % (max_block_size + 1);
+    next_seed_ = rand();
+  }
+};
+
 /*
  * free(nullptr) shouldn't do anything bad.
  */
@@ -659,6 +704,9 @@ TEST_F(MallocTest, ReallocNullptrZeroSize) {
   EXPECT_TRUE(block_lists_are_consistent());
 }
 
+TEST_F(RandomMallocTest, R1) {
+}
+
 /*
  * This test performs a (quite long) sequence of random memory allocation
  * operations and checks the consistency of the allocator after each one.
@@ -673,7 +721,7 @@ TEST_F(MallocTest, RandomExtraviganza) {
   constexpr unsigned operations = reallocate + 1;
   constexpr unsigned blocks = 50;
   constexpr unsigned max_block_size = 256;
-  constexpr unsigned iterations = 1000000;
+  constexpr unsigned iterations = 100;
 
   struct {
     void *ptr;

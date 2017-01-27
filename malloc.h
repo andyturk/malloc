@@ -84,8 +84,8 @@ class Umm : public MemoryAllocator {
 
 protected:
   using blockref_t = uint16_t;
-    static constexpr blockref_t free_bit = 0x8000;
-    static constexpr blockref_t free_mask = 0x7fff;
+  static constexpr blockref_t free_bit = 0x8000;
+  static constexpr blockref_t free_mask = 0x7fff;
 
   struct __attribute__ ((packed)) used_block_t {
     blockref_t prev;
