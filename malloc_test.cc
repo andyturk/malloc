@@ -328,7 +328,7 @@ protected:
     reallocate
   };
 
-  const char *operation_names_[] = {"malloc", "free", "realloc"};
+  const char *operation_names_[3] = {"malloc", "free", "realloc"};
 
   struct block_info_t {
     void *ptr;
@@ -337,16 +337,22 @@ protected:
     unsigned count;
   };
 
-  constexpr unsigned block_count = 50;
-  constexpr unsigned max_block_size = 256;
-  constexpr unsigned max_rounds = 1000000;
+  static constexpr unsigned block_count = 50;
+  static constexpr unsigned max_block_size = 256;
+  static constexpr unsigned max_rounds = 1000000;
 
   block_info_t block_info_[block_count];
-  verb next_operation_;
+  operations_t next_operation_;
   size_t next_size_;
   unsigned next_seed_;
+  unsigned which_block_;
 
   RandomMallocTest() : MallocTest() {
+  }
+
+  virtual void SetUp() override {
+    MallocTest::SetUp();
+
     for (unsigned i = 0; i < block_count; ++i) {
       block_info_[i].ptr = nullptr;
       block_info_[i].len = 0;
@@ -358,10 +364,52 @@ protected:
     srand(20170124);
   }
 
+  block_info_t *find_block_with_ptr(void *ptr) {
+    for (unsigned i=0; i < block_count; ++i) {
+      if (ptr == block_info_[i].ptr) return &block_info_[i];
+    }
+
+    return nullptr;
+  }
+
+  /*
+   * generate a random operation, size, seed value and block index
+   */
   void next() {
-    next_operation_ = rand() % 3;
+    next_operation_ = static_cast<operations_t>(rand() % 3);
     next_size_ = rand() % (max_block_size + 1);
     next_seed_ = rand();
+    which_block_ = rand() % block_count;
+
+    //    printf("op=%s, block=%d, size=%d, seed=%d\n",
+    //           operation_names_[next_operation_], which_block_, (int)next_size_,
+    //           next_seed_);
+  }
+
+  bool iterators_are_consistent() {
+#if 0
+    for (unsigned i=0; i < block_count; ++i) {
+      block_info_[i].count = 0;
+    }
+
+    for (auto block : umm_) {
+      block_info_t *info = find_block_with_ptr(block);
+
+      // iterator returned a block we don't know about
+      if (info == nullptr) return false;
+      assert(block == info->ptr);
+
+      info->count += 1;
+    }
+
+    for (unsigned i=0; i < block_count; ++i) {
+      block_info_t &info {block_info_[i]};
+
+      if (info.ptr != nullptr && info.count != 1) return false;
+    }
+#endif
+
+    return true;
   }
 };
 
@@ -705,6 +753,74 @@ TEST_F(MallocTest, ReallocNullptrZeroSize) {
 }
 
 TEST_F(RandomMallocTest, R1) {
+  for (unsigned i = 0; i < 100; ++i) {
+    next();
+
+    switch (next_operation_) {
+    case allocate:
+      if (block_info_[which_block_].ptr != nullptr) {
+        // get rid of the old one first
+        ASSERT_TRUE(check(block_info_[which_block_].ptr,
+                          block_info_[which_block_].len,
+                          block_info_[which_block_].seed));
+        umm_.free(block_info_[which_block_].ptr);
+      }
+
+      block_info_[which_block_].ptr = malloc(next_size_, next_seed_);
+
+      if (block_info_[which_block_].ptr != nullptr) {
+        block_info_[which_block_].len = next_size_;
+        block_info_[which_block_].seed = next_seed_;
+      } else {
+        block_info_[which_block_].len = 0;
+        block_info_[which_block_].seed = 0;
+      }
+      break;
+
+    case reallocate: {
+      if (block_info_[which_block_].ptr != nullptr) {
+        // check previous block before realloc
+        ASSERT_TRUE(check(block_info_[which_block_].ptr,
+                          block_info_[which_block_].len,
+                          block_info_[which_block_].seed));
+      }
+
+      void *new_ptr =
+          realloc(block_info_[which_block_].ptr, next_size_, next_seed_);
+
+      if (next_size_ == 0) {
+        // realloc(_, 0) frees the block
+        block_info_[which_block_].ptr = nullptr;
+        block_info_[which_block_].len = 0;
+        block_info_[which_block_].seed = 0;
+      } else if (new_ptr != nullptr) {
+        // realloc(_, n>0) reallocated memory
+        block_info_[which_block_].ptr = new_ptr;
+        block_info_[which_block_].len = next_size_;
+        block_info_[which_block_].seed = next_seed_;
+      } else {
+        // realloc(_, n>0) failed, so the original block is unchanged
+      }
+      break;
+    }
+
+    case free:
+      umm_.free(block_info_[which_block_].ptr);
+      block_info_[which_block_].ptr = nullptr;
+      block_info_[which_block_].len = 0;
+      break;
+    }
+
+    if (block_info_[which_block_].ptr != nullptr) {
+      ASSERT_TRUE(validate_ptr(block_info_[which_block_].ptr));
+      ASSERT_TRUE(check(block_info_[which_block_].ptr,
+                        block_info_[which_block_].len,
+                        block_info_[which_block_].seed));
+    }
+
+    ASSERT_TRUE(block_lists_are_consistent());
+    ASSERT_TRUE(iterators_are_consistent());
+  }
 }
 
 /*
@@ -809,4 +925,8 @@ TEST_F(MallocTest, RandomExtraviganza) {
 
     ASSERT_TRUE(block_lists_are_consistent());
   }
+}
+
+TEST_F(MallocTest, NoBlocksMeansNoIteration) {
+  ASSERT_TRUE(umm_.begin() == umm_.end());
 }

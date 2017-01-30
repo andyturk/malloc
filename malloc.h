@@ -103,7 +103,7 @@ protected:
   static constexpr size_t block_size = sizeof(free_block_t);
   static constexpr size_t block_overhead = 2*sizeof(blockref_t);
 
-  bool is_free(const free_block_t &block) const {
+  static bool is_free(const free_block_t &block) {
     return (block.prev & free_bit) != 0;
   }
 
@@ -175,7 +175,7 @@ protected:
         : blocks_(other.blocks_), p_(other.p_) {}
 
     void advance_past_free_blocks() {
-      while ((p_->prev & free_mask) != 0) {
+      while (is_free(*p_)) {
         p_ = &blocks_[p_->next];
       }
     }
