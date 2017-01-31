@@ -1,6 +1,7 @@
 #include <array>
 #include <vector>
 #include <cstdlib>
+#include <map>
 
 #include "gtest/gtest.h"
 #include "malloc.h"
@@ -929,4 +930,82 @@ TEST_F(MallocTest, RandomExtraviganza) {
 
 TEST_F(MallocTest, NoBlocksMeansNoIteration) {
   ASSERT_TRUE(umm_.begin() == umm_.end());
+}
+
+TEST_F(MallocTest, IterateOverOne) {
+  void *block = malloc(25, 0);
+  ASSERT_NE(block, nullptr);
+
+  auto i = umm_.begin();
+  ASSERT_EQ(block, *i);
+  i++;
+
+  ASSERT_EQ(i, umm_.end());
+}
+
+TEST_F(MallocTest, IteratorAvoidsAllocThenFreedBlock) {
+  void *block = malloc(25, 0);
+  ASSERT_NE(block, nullptr);
+
+  umm_.free(block);
+  auto i = umm_.begin();
+  ASSERT_EQ(i, umm_.end());
+}
+
+/*
+ * This test verifies that three blocks can be allocated and then
+ * iterated over. However, it's a bad test because it depends on the
+ * order in which these blocks appear in memory. That order could
+ * change with different allocation stategies (e.g., first-fit vs
+ * best-fit).
+ */
+TEST_F(MallocTest, BadIterateOver3Blocks) {
+  void *block1 = malloc(25, 1);
+  void *block2 = malloc(25, 2);
+  void *block3 = malloc(25, 3);
+
+  ASSERT_NE(block1, nullptr);
+  ASSERT_NE(block2, nullptr);
+  ASSERT_NE(block3, nullptr);
+
+  auto i = umm_.begin();
+
+  ASSERT_EQ(*i, block3);
+  i++;
+
+  ASSERT_EQ(*i, block2);
+  i++;
+
+  ASSERT_EQ(*i, block1);
+  i++;
+
+  ASSERT_EQ(i, umm_.end());
+}
+
+
+/*
+ * This test verifies that three blocks can be allocated and then
+ * iterated over. The test is written so the physical order of the
+ * blocks in memory isn't important.
+ */
+TEST_F(MallocTest, BetterIterateOver3Blocks) {
+  std::map<void *,unsigned> markers;
+
+  markers[malloc(25, 1)] = 0;
+  markers[malloc(25, 2)] = 0;
+  markers[malloc(25, 3)] = 0;
+
+  auto i = umm_.begin();
+  markers[*i++] += 1;
+  markers[*i++] += 1;
+  markers[*i++] += 1;
+
+  ASSERT_EQ(i, umm_.end());
+
+  auto m = markers.begin();
+  ASSERT_EQ(m->second, 1);
+  m++;
+  ASSERT_EQ(m->second, 1);
+  m++;
+  ASSERT_EQ(m->second, 1);
 }

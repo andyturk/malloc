@@ -195,7 +195,8 @@ protected:
     }
     bool operator==(const iterator &rhs) const { return p_ == rhs.p_ && blocks_ == rhs.blocks_; }
     bool operator!=(const iterator &rhs) const { return p_ != rhs.p_ && blocks_ == rhs.blocks_; }
-    used_block_t &operator*() { return *reinterpret_cast<used_block_t *>(p_); }
+
+    void* operator*() { return reinterpret_cast<used_block_t *>(p_)->data; }
   };
 
   unsigned length_of(const free_block_t &block) {
