@@ -387,28 +387,26 @@ protected:
     //           next_seed_);
   }
 
+  /*
+   * Verify that the allocation iterator returns each allocated
+   * block exactly once.
+   */
   bool iterators_are_consistent() {
-#if 0
+    std::map<void *, unsigned> scorecard;
+
     for (unsigned i=0; i < block_count; ++i) {
-      block_info_[i].count = 0;
+      if (block_info_[i].ptr != nullptr) {
+        scorecard[block_info_[i].ptr] = 0;
+      }
     }
 
     for (auto block : umm_) {
-      block_info_t *info = find_block_with_ptr(block);
-
-      // iterator returned a block we don't know about
-      if (info == nullptr) return false;
-      assert(block == info->ptr);
-
-      info->count += 1;
+      scorecard[block] += 1;
     }
 
-    for (unsigned i=0; i < block_count; ++i) {
-      block_info_t &info {block_info_[i]};
-
-      if (info.ptr != nullptr && info.count != 1) return false;
+    for (auto i : scorecard) {
+      if (i.second != 1) return false;
     }
-#endif
 
     return true;
   }
